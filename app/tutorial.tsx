@@ -20,8 +20,8 @@ import GameGrid from '@/components/GameGrid';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const TUTORIAL_GRID = [
-  [1, 0, 0],
-  [0, 1, 1],
+  [0, 1, 0],
+  [0, 1, 0],
 ];
 
 const DEMO_CELL_SIZE = 44;
@@ -228,8 +228,8 @@ function AnimatedMiniGrid({
 
   const solvePath = useMemo(() => {
     return [
-      { row: 1, col: 1 },
-      { row: 2, col: 1 },
+      { row: 1, col: 2 },
+      { row: 2, col: 2 },
     ];
   }, []);
 
@@ -404,7 +404,7 @@ function AnimatedMiniGrid({
 const STEPS = [
   {
     title: 'Welcome to Polaris',
-    body: 'A puzzle game where you flip tiles to make every row the same color.',
+    body: 'A puzzle game where you flip tiles to make them all the same color.',
     type: 'welcome' as const,
   },
   {
@@ -414,12 +414,12 @@ const STEPS = [
   },
   {
     title: 'The Goal',
-    body: 'Make every row a single color — all light or all dark. You only get one line per attempt!',
+    body: 'Make all tiles the same color — all light or all dark. You only get one line per attempt!',
     type: 'goal' as const,
   },
   {
     title: 'Try It!',
-    body: 'Draw a line to make both rows uniform. Hint: flip the tiles that don\'t match their row.',
+    body: 'Draw a line to make all tiles the same color. Hint: flip the dark tiles to light!',
     type: 'interactive' as const,
   },
 ];
@@ -507,7 +507,7 @@ export default function TutorialScreen() {
         return (
           <View style={styles.demoArea}>
             <AnimatedMiniGrid innerGrid={TUTORIAL_GRID} animPhase="flipping" />
-            <Text style={styles.demoLabel}>All tiles in each row match = solved</Text>
+            <Text style={styles.demoLabel}>All tiles the same color = solved</Text>
           </View>
         );
 

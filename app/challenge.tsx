@@ -257,7 +257,7 @@ export default function ChallengeScreen() {
             }]}>
               <Text style={styles.startTitle}>CHALLENGE</Text>
               <Text style={styles.startDesc}>
-                Flip tiles to make rows uniform.{'\n'}
+                Flip tiles to make rows one color.{'\n'}
                 Clear rows before they overflow!
               </Text>
               <Pressable

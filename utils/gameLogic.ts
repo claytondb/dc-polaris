@@ -67,7 +67,16 @@ export function getUniformRows(innerGrid: number[][]): number[] {
 }
 
 export function isAllCleared(innerGrid: number[][]): boolean {
-  return getUniformRows(innerGrid).length === innerGrid.length;
+  if (innerGrid.length === 0) return true;
+  let target: number | null = null;
+  for (const row of innerGrid) {
+    for (const cell of row) {
+      const base = getBaseValue(cell);
+      if (target === null) target = base;
+      else if (base !== target) return false;
+    }
+  }
+  return true;
 }
 
 export function removeRows(innerGrid: number[][], rowIndices: number[]): number[][] {

@@ -399,7 +399,7 @@ export default function PuzzleScreen() {
             </Pressable>
           </View>
           <Text style={styles.instructionText}>
-            Draw one line to make every row uniform
+            Draw one line to make all tiles the same color
           </Text>
         </Animated.View>
 

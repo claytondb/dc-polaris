@@ -24,6 +24,10 @@ const CELL_GAP = 2;
 type EditorMode = 'path' | 'locked' | 'preview';
 type Difficulty = 'easy' | 'medium' | 'hard' | 'expert';
 
+function uniformGrid(rows: number, cols: number): number[][] {
+  return Array.from({ length: rows }, () => Array(cols).fill(0));
+}
+
 function altGrid(rows: number, cols: number, startVal: number = 0): number[][] {
   return Array.from({ length: rows }, (_, r) =>
     Array(cols).fill((r + startVal) % 2)
@@ -58,7 +62,7 @@ export default function EditorScreen() {
   const [puzzleId, setPuzzleId] = useState<string>('201');
   const [isPremium, setIsPremium] = useState<boolean>(false);
 
-  const solvedGrid = useMemo(() => altGrid(rows, cols, startVal), [rows, cols, startVal]);
+  const solvedGrid = useMemo(() => uniformGrid(rows, cols), [rows, cols]);
 
   const puzzleGrid = useMemo(() => {
     const pg = createPuzzleGrid(solvedGrid, solutionPath);
@@ -184,14 +188,14 @@ export default function EditorScreen() {
     id: ${id},${isPremium ? ' isPremium: true,' : ''} difficulty: '${difficulty}',
     solutionPath: [${pathStr}],
     grid: (() => {
-      const g = altGrid(${rows},${cols}${startVal !== 0 ? `,${startVal}` : ''});
+      const g = uniformGrid(${rows},${cols});
       const pg = createPuzzleGrid(g, [${pathStr}]);
 ${lockedLines.join('\n')}
       return pg;
     })(),
   },`;
     } else {
-      code = `  { id: ${id},${isPremium ? ' isPremium: true,' : ''} difficulty: '${difficulty}', solutionPath: [${pathStr}], grid: createPuzzleGrid(altGrid(${rows},${cols}${startVal !== 0 ? `,${startVal}` : ''}), [${pathStr}]) },`;
+      code = `  { id: ${id},${isPremium ? ' isPremium: true,' : ''} difficulty: '${difficulty}', solutionPath: [${pathStr}], grid: createPuzzleGrid(uniformGrid(${rows},${cols}), [${pathStr}]) },`;
     }
 
     return code;
@@ -219,23 +223,12 @@ ${lockedLines.join('\n')}
 
   const isSolvable = useMemo(() => {
     if (solutionPath.length === 0) return false;
-    const testGrid = altGrid(rows, cols, startVal);
+    const testGrid = uniformGrid(rows, cols);
     for (const [r, c] of solutionPath) {
       if (r < 0 || r >= rows || c < 0 || c >= cols) return false;
     }
-    const flipped = createPuzzleGrid(testGrid, solutionPath);
-    for (let r = 0; r < rows; r++) {
-      const first = flipped[r][0];
-      if (!flipped[r].every(v => {
-        const base = v === 2 || v === 0 ? 0 : 1;
-        const firstBase = first === 2 || first === 0 ? 0 : 1;
-        return base === firstBase || v === 2 || v === 3;
-      })) {
-        // Row isn't uniform in the unsolved state - that's expected
-      }
-    }
     return true;
-  }, [solutionPath, rows, cols, startVal]);
+  }, [solutionPath, rows, cols]);
 
   const pathIsConnected = useMemo(() => {
     if (solutionPath.length <= 1) return true;
