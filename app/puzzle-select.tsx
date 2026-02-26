@@ -103,7 +103,7 @@ export default function PuzzleSelectScreen() {
           completed && [styles.puzzleCardCompleted, { borderColor: groupColor + '40' }],
           pressed && !locked && styles.puzzleCardPressed,
           locked && styles.puzzleCardLocked,
-          puzzle.source === 'custom' && styles.puzzleCardCustom,
+
         ]}
         onPress={() => {
           if (locked) return;
@@ -380,12 +380,7 @@ const styles = StyleSheet.create({
   puzzleCardLocked: {
     opacity: 0.45,
   },
-  puzzleCardCustom: {
-    borderColor: '#FFFFFF',
-    borderWidth: 2,
-    borderTopColor: '#FFFFFF',
-    borderBottomColor: '#FFFFFF',
-  },
+
   puzzleNumber: {
     fontSize: 17,
     fontWeight: '700' as const,
