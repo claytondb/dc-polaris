@@ -27,9 +27,12 @@ interface GameGridProps {
   flashRows?: number[];
   hintCells?: CellPosition[];
   theme?: GameTheme;
+  inkLimit?: number;
+  onInkExhausted?: () => void;
+  onInkChange?: (used: number) => void;
 }
 
-function GameGrid({ innerGrid, onPathComplete, disabled = false, flashRows = [], hintCells = [], theme }: GameGridProps) {
+function GameGrid({ innerGrid, onPathComplete, disabled = false, flashRows = [], hintCells = [], theme, inkLimit, onInkExhausted, onInkChange }: GameGridProps) {
   const [path, setPath] = useState<CellPosition[]>([]);
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const flashAnims = useRef<Map<number, Animated.Value>>(new Map()).current;
@@ -54,6 +57,12 @@ function GameGrid({ innerGrid, onPathComplete, disabled = false, flashRows = [],
   onPathCompleteRef.current = onPathComplete;
   const configRef = useRef({ cellSize, totalCols, totalRows });
   configRef.current = { cellSize, totalCols, totalRows };
+  const inkLimitRef = useRef<number | undefined>(inkLimit);
+  inkLimitRef.current = inkLimit;
+  const onInkExhaustedRef = useRef(onInkExhausted);
+  onInkExhaustedRef.current = onInkExhausted;
+  const onInkChangeRef = useRef(onInkChange);
+  onInkChangeRef.current = onInkChange;
 
   const wrapperRef = useRef<View>(null);
   const gridOriginRef = useRef({ x: 0, y: 0 });
@@ -150,6 +159,7 @@ function GameGrid({ innerGrid, onPathComplete, disabled = false, flashRows = [],
       if (cell) {
         pathRef.current = [cell];
         setPath([cell]);
+        onInkChangeRef.current?.(1);
         isDrawingRef.current = true;
         Haptics.selectionAsync();
       } else {
@@ -158,6 +168,7 @@ function GameGrid({ innerGrid, onPathComplete, disabled = false, flashRows = [],
         if (cellFromPage) {
           pathRef.current = [cellFromPage];
           setPath([cellFromPage]);
+          onInkChangeRef.current?.(1);
           isDrawingRef.current = true;
           Haptics.selectionAsync();
         }
@@ -184,6 +195,7 @@ function GameGrid({ innerGrid, onPathComplete, disabled = false, flashRows = [],
           const newPath = currentPath.slice(0, -1);
           pathRef.current = newPath;
           setPath([...newPath]);
+          onInkChangeRef.current?.(newPath.length);
           Haptics.selectionAsync();
           return;
         }
@@ -193,9 +205,14 @@ function GameGrid({ innerGrid, onPathComplete, disabled = false, flashRows = [],
       const visited = currentPath.some(p => isSameCell(p, current));
 
       if (adj && !visited) {
+        if (inkLimitRef.current !== undefined && currentPath.length >= inkLimitRef.current) {
+          onInkExhaustedRef.current?.();
+          return;
+        }
         const newPath = [...currentPath, current];
         pathRef.current = newPath;
         setPath([...newPath]);
+        onInkChangeRef.current?.(newPath.length);
         Haptics.selectionAsync();
       }
     },

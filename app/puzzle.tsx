@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, RotateCcw, ChevronRight, Check, Lightbulb, SkipForward } from 'lucide-react-native';
+import { ArrowLeft, RotateCcw, ChevronRight, Check, Lightbulb, SkipForward, Droplet } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import PUZZLES from '@/constants/puzzles';
@@ -78,10 +78,115 @@ function getThemeParticles(themeId: string): { colors: string[]; shape: Particle
   }
 }
 
+interface InkGaugeProps {
+  inkUsed: number;
+  inkLimit: number;
+  inkAnimValue: Animated.Value;
+  themeAccent: string;
+  headerFade: Animated.Value;
+}
+
+function InkGauge({ inkUsed, inkLimit, inkAnimValue, themeAccent, headerFade }: InkGaugeProps) {
+  const inkRemaining = inkLimit - inkUsed;
+  const inkRatio = inkRemaining / inkLimit;
+  const inkColor = inkRatio > 0.5 ? themeAccent : inkRatio > 0.25 ? '#FF9500' : Colors.danger;
+
+  const dots = Array.from({ length: inkLimit }, (_, i) => i);
+  const useDots = inkLimit <= 20;
+
+  return (
+    <Animated.View style={[inkGaugeStyles.container, { opacity: headerFade }]}>
+      <View style={inkGaugeStyles.row}>
+        <Droplet size={13} color={inkColor} />
+        {useDots ? (
+          <View style={inkGaugeStyles.dotsRow}>
+            {dots.map(i => (
+              <View
+                key={i}
+                style={[
+                  inkGaugeStyles.dot,
+                  { backgroundColor: i < inkUsed ? 'rgba(255,255,255,0.12)' : inkColor },
+                ]}
+              />
+            ))}
+          </View>
+        ) : (
+          <View style={inkGaugeStyles.track}>
+            <Animated.View
+              style={[
+                inkGaugeStyles.fill,
+                {
+                  width: inkAnimValue.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0%', '100%'],
+                  }),
+                  backgroundColor: inkColor,
+                },
+              ]}
+            />
+          </View>
+        )}
+        <Text style={[inkGaugeStyles.count, { color: inkColor }]}>
+          {inkRemaining}
+        </Text>
+      </View>
+    </Animated.View>
+  );
+}
+
+const inkGaugeStyles = StyleSheet.create({
+  container: {
+    paddingHorizontal: 32,
+    paddingBottom: 10,
+    alignItems: 'center',
+  },
+  row: {
+    flexDirection: 'row' as const,
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    maxWidth: 320,
+  },
+  dotsRow: {
+    flex: 1,
+    flexDirection: 'row' as const,
+    flexWrap: 'wrap' as const,
+    gap: 4,
+    alignItems: 'center',
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  track: {
+    flex: 1,
+    height: 5,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 3,
+    overflow: 'hidden' as const,
+  },
+  fill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  count: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    width: 26,
+    textAlign: 'right' as const,
+    letterSpacing: 0.5,
+    fontVariant: ['tabular-nums'] as const,
+  },
+});
+
 export default function PuzzleScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { completePuzzle, completedPuzzles, activeTheme, randomizeThemes, getRandomTheme, hints, skips, useHint, useSkip } = useGameStorage();
+
+  const [inkUsed, setInkUsed] = useState(0);
+  const inkAnimValue = useRef(new Animated.Value(1)).current;
 
   const [resolvedTheme] = useState(() => randomizeThemes ? getRandomTheme() : getThemeById(activeTheme));
   const theme = randomizeThemes ? resolvedTheme : getThemeById(activeTheme);
@@ -109,6 +214,7 @@ export default function PuzzleScreen() {
   const nextPuzzle = useMemo(() => PUZZLES[puzzleIndex + 1], [puzzleIndex]);
 
   const originalGrid = useMemo(() => puzzle?.grid.map(r => [...r]) ?? [], [puzzle]);
+  const inkLimit = puzzle?.solutionPath.length ?? 1;
   const [grid, setGrid] = useState<number[][]>(originalGrid);
   const [phase, setPhase] = useState<Phase>('input');
   const [attempts, setAttempts] = useState(0);
@@ -127,7 +233,9 @@ export default function PuzzleScreen() {
     setPhase('input');
     setAttempts(0);
     setHintCells([]);
+    setInkUsed(0);
     overlayAnim.setValue(0);
+    inkAnimValue.setValue(1);
     gridEntryAnim.setValue(0);
     headerFade.setValue(0);
     solvedGlow.setValue(0);
@@ -143,9 +251,11 @@ export default function PuzzleScreen() {
     setPhase('input');
     setFlashRows([]);
     setHintCells([]);
+    setInkUsed(0);
+    inkAnimValue.setValue(1);
     gridEntryAnim.setValue(0.8);
     Animated.spring(gridEntryAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 10 }).start();
-  }, [originalGrid, gridEntryAnim]);
+  }, [originalGrid, gridEntryAnim, inkAnimValue]);
 
   const handlePathComplete = useCallback((path: CellPosition[]) => {
     if (phase !== 'input') return;
@@ -200,10 +310,12 @@ export default function PuzzleScreen() {
         setTimeout(() => {
           setGrid(originalGrid);
           setPhase('input');
+          setInkUsed(0);
+          inkAnimValue.setValue(1);
         }, 400);
       }, 500);
     }
-  }, [phase, grid, originalGrid, puzzleId, completePuzzle, overlayAnim, shakeAnim, solvedGlow]);
+  }, [phase, grid, originalGrid, puzzleId, completePuzzle, overlayAnim, shakeAnim, solvedGlow, inkAnimValue]);
 
   const spawnParticles = useCallback(() => {
     const config = getThemeParticles(theme.id);
@@ -250,6 +362,27 @@ export default function PuzzleScreen() {
     setParticles(newParticles);
     setTimeout(() => setParticles([]), 2000);
   }, [theme.id]);
+
+  const handleInkChange = useCallback((used: number) => {
+    setInkUsed(used);
+    const ratio = Math.max(0, (inkLimit - used) / inkLimit);
+    Animated.timing(inkAnimValue, {
+      toValue: ratio,
+      duration: 80,
+      useNativeDriver: false,
+    }).start();
+  }, [inkLimit, inkAnimValue]);
+
+  const triggerShake = useCallback(() => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 6, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -6, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+    ]).start();
+  }, [shakeAnim]);
 
   const goToNext = useCallback(() => {
     if (nextPuzzle) {
@@ -343,7 +476,7 @@ export default function PuzzleScreen() {
 
         <Animated.View style={[styles.infoBar, { opacity: headerFade }]}>
           <Text style={styles.infoText}>Attempts: {attempts}</Text>
-          <Text style={styles.infoText}>{grid.length} × {grid[0]?.length ?? 0}</Text>
+          <Text style={styles.infoText}>{grid.length} × {grid[0]?.length ?? 0} · {inkLimit} ink</Text>
         </Animated.View>
 
         <View style={styles.gridArea}>
@@ -367,11 +500,22 @@ export default function PuzzleScreen() {
                 flashRows={flashRows}
                 hintCells={hintCells}
                 theme={theme}
+                inkLimit={inkLimit}
+                onInkExhausted={triggerShake}
+                onInkChange={handleInkChange}
               />
               <View style={styles.gridFrameBottomEdge} pointerEvents="none" />
             </View>
           </Animated.View>
         </View>
+
+        <InkGauge
+          inkUsed={inkUsed}
+          inkLimit={inkLimit}
+          inkAnimValue={inkAnimValue}
+          themeAccent={theme?.accent ?? Colors.accent}
+          headerFade={headerFade}
+        />
 
         <Animated.View style={[styles.footer, { opacity: headerFade }]}>
           <View style={styles.powerupRow}>
