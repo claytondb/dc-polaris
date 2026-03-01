@@ -91,41 +91,24 @@ function InkGauge({ inkUsed, inkLimit, inkAnimValue, themeAccent, headerFade }: 
   const inkRatio = inkRemaining / inkLimit;
   const inkColor = inkRatio > 0.5 ? themeAccent : inkRatio > 0.25 ? '#FF9500' : Colors.danger;
 
-  const dots = Array.from({ length: inkLimit }, (_, i) => i);
-  const useDots = inkLimit <= 20;
-
   return (
     <Animated.View style={[inkGaugeStyles.container, { opacity: headerFade }]}>
       <View style={inkGaugeStyles.row}>
         <Droplet size={13} color={inkColor} />
-        {useDots ? (
-          <View style={inkGaugeStyles.dotsRow}>
-            {dots.map(i => (
-              <View
-                key={i}
-                style={[
-                  inkGaugeStyles.dot,
-                  { backgroundColor: i < inkUsed ? 'rgba(255,255,255,0.12)' : inkColor },
-                ]}
-              />
-            ))}
-          </View>
-        ) : (
-          <View style={inkGaugeStyles.track}>
-            <Animated.View
-              style={[
-                inkGaugeStyles.fill,
-                {
-                  width: inkAnimValue.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0%', '100%'],
-                  }),
-                  backgroundColor: inkColor,
-                },
-              ]}
-            />
-          </View>
-        )}
+        <View style={inkGaugeStyles.track}>
+          <Animated.View
+            style={[
+              inkGaugeStyles.fill,
+              {
+                width: inkAnimValue.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0%', '100%'],
+                }),
+                backgroundColor: inkColor,
+              },
+            ]}
+          />
+        </View>
         <Text style={[inkGaugeStyles.count, { color: inkColor }]}>
           {inkRemaining}
         </Text>
@@ -146,18 +129,6 @@ const inkGaugeStyles = StyleSheet.create({
     gap: 8,
     width: '100%',
     maxWidth: 320,
-  },
-  dotsRow: {
-    flex: 1,
-    flexDirection: 'row' as const,
-    flexWrap: 'wrap' as const,
-    gap: 4,
-    alignItems: 'center',
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
   },
   track: {
     flex: 1,
