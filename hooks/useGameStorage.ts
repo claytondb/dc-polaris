@@ -4,6 +4,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
 import { THEMES, FREE_THEMES, PREMIUM_THEMES, GameTheme } from '@/constants/themes';
 
+
+export interface SerializedPuzzle {
+  id: number;
+  grid: number[][];
+  difficulty: 'easy' | 'medium' | 'hard' | 'expert';
+  solutionPath: [number, number][];
+  isPremium?: boolean;
+}
+
 interface GameData {
   completedPuzzles: number[];
   challengeHighScore: number;
@@ -18,6 +27,7 @@ interface GameData {
 }
 
 const STORAGE_KEY = 'polaris_game_data';
+const CUSTOM_PUZZLES_KEY = 'polaris_custom_puzzles';
 const DEFAULT_DATA: GameData = {
   completedPuzzles: [],
   challengeHighScore: 0,
@@ -34,6 +44,7 @@ const DEFAULT_DATA: GameData = {
 export const [GameStorageProvider, useGameStorage] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [data, setData] = useState<GameData>(DEFAULT_DATA);
+  const [customPuzzles, setCustomPuzzles] = useState<SerializedPuzzle[]>([]);
 
   const { data: storedData, isLoading } = useQuery({
     queryKey: ['gameData'],
@@ -45,11 +56,26 @@ export const [GameStorageProvider, useGameStorage] = createContextHook(() => {
     },
   });
 
+  const { data: storedCustomPuzzles } = useQuery({
+    queryKey: ['customPuzzles'],
+    queryFn: async () => {
+      const stored = await AsyncStorage.getItem(CUSTOM_PUZZLES_KEY);
+      if (!stored) return [] as SerializedPuzzle[];
+      return JSON.parse(stored) as SerializedPuzzle[];
+    },
+  });
+
   useEffect(() => {
     if (storedData) {
       setData(storedData);
     }
   }, [storedData]);
+
+  useEffect(() => {
+    if (storedCustomPuzzles) {
+      setCustomPuzzles(storedCustomPuzzles);
+    }
+  }, [storedCustomPuzzles]);
 
   const saveMutation = useMutation({
     mutationFn: async (newData: GameData) => {
@@ -60,6 +86,37 @@ export const [GameStorageProvider, useGameStorage] = createContextHook(() => {
       queryClient.setQueryData(['gameData'], newData);
     },
   });
+
+  const saveCustomPuzzlesMutation = useMutation({
+    mutationFn: async (puzzles: SerializedPuzzle[]) => {
+      await AsyncStorage.setItem(CUSTOM_PUZZLES_KEY, JSON.stringify(puzzles));
+      return puzzles;
+    },
+    onSuccess: (puzzles) => {
+      queryClient.setQueryData(['customPuzzles'], puzzles);
+    },
+  });
+
+  const saveCustomPuzzle = useCallback((puzzle: SerializedPuzzle) => {
+    const existing = customPuzzles.findIndex(p => p.id === puzzle.id);
+    let updated: SerializedPuzzle[];
+    if (existing >= 0) {
+      updated = [...customPuzzles];
+      updated[existing] = puzzle;
+    } else {
+      updated = [...customPuzzles, puzzle];
+    }
+    setCustomPuzzles(updated);
+    saveCustomPuzzlesMutation.mutate(updated);
+    console.log('[GameStorage] Custom puzzle saved:', puzzle.id);
+  }, [customPuzzles, saveCustomPuzzlesMutation]);
+
+  const deleteCustomPuzzle = useCallback((puzzleId: number) => {
+    const updated = customPuzzles.filter(p => p.id !== puzzleId);
+    setCustomPuzzles(updated);
+    saveCustomPuzzlesMutation.mutate(updated);
+    console.log('[GameStorage] Custom puzzle deleted:', puzzleId);
+  }, [customPuzzles, saveCustomPuzzlesMutation]);
 
   const completePuzzle = useCallback((puzzleId: number) => {
     const alreadyCompleted = data.completedPuzzles.includes(puzzleId);
@@ -163,7 +220,7 @@ export const [GameStorageProvider, useGameStorage] = createContextHook(() => {
     return availableThemes[idx];
   }, [availableThemes]);
 
-  return {
+  return useMemo(() => ({
     completedPuzzles: data.completedPuzzles,
     challengeHighScore: data.challengeHighScore,
     activeTheme: data.activeTheme,
@@ -188,5 +245,14 @@ export const [GameStorageProvider, useGameStorage] = createContextHook(() => {
     setRandomizeThemes,
     getRandomTheme,
     availableThemes,
-  };
+    customPuzzles,
+    saveCustomPuzzle,
+    deleteCustomPuzzle,
+  }), [
+    data, isLoading, completePuzzle, updateHighScore, setActiveTheme,
+    unlockTheme, completeTutorial, useHint, useSkip, addCredits,
+    unlockPremiumThemes, unlockLevelPack, setRandomizeThemes,
+    getRandomTheme, availableThemes, customPuzzles, saveCustomPuzzle,
+    deleteCustomPuzzle,
+  ]);
 });

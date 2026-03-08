@@ -154,7 +154,7 @@ const inkGaugeStyles = StyleSheet.create({
 export default function PuzzleScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { completePuzzle, completedPuzzles, activeTheme, randomizeThemes, getRandomTheme, hints, skips, useHint, useSkip } = useGameStorage();
+  const { completePuzzle, completedPuzzles, activeTheme, randomizeThemes, getRandomTheme, hints, skips, useHint, useSkip, customPuzzles } = useGameStorage();
 
   const [inkUsed, setInkUsed] = useState(0);
   const inkAnimValue = useRef(new Animated.Value(1)).current;
@@ -180,7 +180,11 @@ export default function PuzzleScreen() {
   }, [isMirrorTheme, cameraPermission?.granted]);
 
   const puzzleId = parseInt(id ?? '1', 10);
-  const puzzle = useMemo(() => PUZZLES.find(p => p.id === puzzleId), [puzzleId]);
+  const puzzle = useMemo(() => {
+    const custom = customPuzzles.find(p => p.id === puzzleId);
+    if (custom) return custom;
+    return PUZZLES.find(p => p.id === puzzleId);
+  }, [puzzleId, customPuzzles]);
   const puzzleIndex = useMemo(() => PUZZLES.findIndex(p => p.id === puzzleId), [puzzleId]);
   const nextPuzzle = useMemo(() => PUZZLES[puzzleIndex + 1], [puzzleIndex]);
 

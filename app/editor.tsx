@@ -1,7 +1,8 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   Dimensions,
+  FlatList,
   Platform,
   Pressable,
   ScrollView,
@@ -12,49 +13,66 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Copy, Eye, Grid3x3, Minus, Play, Plus, RotateCcw, Trash2, Undo2 } from 'lucide-react-native';
+import {
+  ArrowLeft,
+  Check,
+  Copy,
+  Download,
+  Eye,
+  Grid3x3,
+  Minus,
+  Play,
+  Plus,
+  RotateCcw,
+  Save,
+  Trash2,
+  Undo2,
+  X,
+} from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import Colors from '@/constants/colors';
+import ALL_PUZZLES, { uniformGrid, createPuzzleGrid, Puzzle } from '@/constants/puzzles';
+import { useGameStorage } from '@/hooks/useGameStorage';
+import { SerializedPuzzle } from '@/hooks/useGameStorage';
+import { CellPosition, applyFlip, isAllCleared } from '@/utils/gameLogic';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const GRID_PADDING = 16;
 const CELL_GAP = 2;
 
-type EditorMode = 'path' | 'locked' | 'preview';
+type EditorMode = 'path' | 'locked' | 'preview' | 'test';
 type Difficulty = 'easy' | 'medium' | 'hard' | 'expert';
-
-function uniformGrid(rows: number, cols: number): number[][] {
-  return Array.from({ length: rows }, () => Array(cols).fill(0));
-}
-
-function altGrid(rows: number, cols: number, startVal: number = 0): number[][] {
-  return Array.from({ length: rows }, (_, r) =>
-    Array(cols).fill((r + startVal) % 2)
-  );
-}
-
-function createPuzzleGrid(
-  solvedGrid: number[][],
-  solutionPath: [number, number][]
-): number[][] {
-  const grid = solvedGrid.map(row => [...row]);
-  for (const [r, c] of solutionPath) {
-    if (grid[r][c] === 0) grid[r][c] = 1;
-    else if (grid[r][c] === 1) grid[r][c] = 0;
-  }
-  return grid;
-}
+type EditorView = 'editor' | 'browser';
 
 function isAdjacent(a: [number, number], b: [number, number]): boolean {
   return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) === 1;
 }
 
+function buildPuzzleGrid(
+  rows: number,
+  cols: number,
+  solutionPath: [number, number][],
+  lockedCells: Map<string, 2 | 3>
+): number[][] {
+  const solvedGrid = uniformGrid(rows, cols);
+  const pg = createPuzzleGrid(solvedGrid, solutionPath);
+  for (const [key, val] of lockedCells) {
+    const [r, c] = key.split(',').map(Number);
+    if (r < rows && c < cols) {
+      pg[r][c] = val;
+    }
+  }
+  return pg;
+}
+
 export default function EditorScreen() {
   const router = useRouter();
+  const { customPuzzles, saveCustomPuzzle, deleteCustomPuzzle } = useGameStorage();
+
+  const [editorView, setEditorView] = useState<EditorView>('editor');
   const [rows, setRows] = useState<number>(4);
   const [cols, setCols] = useState<number>(5);
-  const [startVal, setStartVal] = useState<number>(0);
   const [solutionPath, setSolutionPath] = useState<[number, number][]>([]);
   const [lockedCells, setLockedCells] = useState<Map<string, 2 | 3>>(new Map());
   const [mode, setMode] = useState<EditorMode>('path');
@@ -62,22 +80,18 @@ export default function EditorScreen() {
   const [puzzleId, setPuzzleId] = useState<string>('201');
   const [isPremium, setIsPremium] = useState<boolean>(false);
 
+  const [testGrid, setTestGrid] = useState<number[][] | null>(null);
+  const [testPath, setTestPath] = useState<CellPosition[]>([]);
+  const [testResult, setTestResult] = useState<'none' | 'solved' | 'failed'>('none');
+  const [testInkUsed, setTestInkUsed] = useState<number>(0);
+
+  const [browserFilter, setBrowserFilter] = useState<'all' | 'custom' | 'easy' | 'medium' | 'hard' | 'expert'>('all');
+
   const solvedGrid = useMemo(() => uniformGrid(rows, cols), [rows, cols]);
 
   const puzzleGrid = useMemo(() => {
-    const pg = createPuzzleGrid(solvedGrid, solutionPath);
-    for (const [key, val] of lockedCells) {
-      const [r, c] = key.split(',').map(Number);
-      if (r < rows && c < cols) {
-        pg[r][c] = val;
-      }
-    }
-    return pg;
-  }, [solvedGrid, solutionPath, lockedCells, rows, cols]);
-
-  const previewGrid = useMemo(() => {
-    return puzzleGrid;
-  }, [puzzleGrid]);
+    return buildPuzzleGrid(rows, cols, solutionPath, lockedCells);
+  }, [rows, cols, solutionPath, lockedCells]);
 
   const cellSize = useMemo(() => {
     const maxWidth = SCREEN_WIDTH - GRID_PADDING * 2;
@@ -161,74 +175,14 @@ export default function EditorScreen() {
 
   const adjustDimension = useCallback((dim: 'rows' | 'cols', delta: number) => {
     if (dim === 'rows') {
-      setRows(prev => Math.max(2, Math.min(10, prev + delta)));
+      setRows(prev => Math.max(2, Math.min(12, prev + delta)));
     } else {
-      setCols(prev => Math.max(2, Math.min(10, prev + delta)));
+      setCols(prev => Math.max(2, Math.min(12, prev + delta)));
     }
     setSolutionPath([]);
     setLockedCells(new Map());
     Haptics.selectionAsync();
   }, []);
-
-  const generateCode = useCallback(() => {
-    const id = parseInt(puzzleId) || 201;
-    const pathStr = solutionPath.map(([r, c]) => `[${r},${c}]`).join(',');
-
-    const hasLocked = lockedCells.size > 0;
-
-    let code = '';
-    if (hasLocked) {
-      const lockedLines: string[] = [];
-      for (const [key, val] of lockedCells) {
-        const [r, c] = key.split(',').map(Number);
-        lockedLines.push(`      pg[${r}][${c}] = ${val};`);
-      }
-
-      code = `  {
-    id: ${id},${isPremium ? ' isPremium: true,' : ''} difficulty: '${difficulty}',
-    solutionPath: [${pathStr}],
-    grid: (() => {
-      const g = uniformGrid(${rows},${cols});
-      const pg = createPuzzleGrid(g, [${pathStr}]);
-${lockedLines.join('\n')}
-      return pg;
-    })(),
-  },`;
-    } else {
-      code = `  { id: ${id},${isPremium ? ' isPremium: true,' : ''} difficulty: '${difficulty}', solutionPath: [${pathStr}], grid: createPuzzleGrid(uniformGrid(${rows},${cols}), [${pathStr}]) },`;
-    }
-
-    return code;
-  }, [puzzleId, solutionPath, lockedCells, difficulty, rows, cols, startVal, isPremium]);
-
-  const handleCopy = useCallback(async () => {
-    const code = generateCode();
-    if (Platform.OS === 'web') {
-      try {
-        await navigator.clipboard.writeText(code);
-      } catch {
-        Alert.alert('Code', code);
-      }
-    } else {
-      await Clipboard.setStringAsync(code);
-    }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('Copied!', 'Puzzle code copied to clipboard.');
-  }, [generateCode]);
-
-  const handleExportAll = useCallback(() => {
-    const code = generateCode();
-    Alert.alert('Puzzle Code', code);
-  }, [generateCode]);
-
-  const isSolvable = useMemo(() => {
-    if (solutionPath.length === 0) return false;
-    const testGrid = uniformGrid(rows, cols);
-    for (const [r, c] of solutionPath) {
-      if (r < 0 || r >= rows || c < 0 || c >= cols) return false;
-    }
-    return true;
-  }, [solutionPath, rows, cols]);
 
   const pathIsConnected = useMemo(() => {
     if (solutionPath.length <= 1) return true;
@@ -268,60 +222,444 @@ ${lockedLines.join('\n')}
     };
   }, [solutionPath, rows, cols, lockedCells]);
 
-  const renderSolvedGrid = () => {
-    const grid = solvedGrid;
+  const handleSaveToGame = useCallback(() => {
+    if (solutionPath.length === 0) {
+      Alert.alert('No Path', 'Draw a solution path before saving.');
+      return;
+    }
+    if (!pathIsConnected) {
+      Alert.alert('Path Not Connected', 'The solution path must be a continuous connected line.');
+      return;
+    }
+
+    const id = parseInt(puzzleId) || 201;
+    const grid = buildPuzzleGrid(rows, cols, solutionPath, lockedCells);
+
+    const puzzle: SerializedPuzzle = {
+      id,
+      grid,
+      difficulty,
+      solutionPath: [...solutionPath],
+      isPremium: isPremium || undefined,
+    };
+
+    saveCustomPuzzle(puzzle);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert('Saved!', `Puzzle #${id} saved to game. It will override the built-in level with the same ID.`);
+  }, [puzzleId, solutionPath, lockedCells, difficulty, rows, cols, isPremium, pathIsConnected, saveCustomPuzzle]);
+
+  const handleStartTest = useCallback(() => {
+    if (solutionPath.length === 0) {
+      Alert.alert('No Path', 'Draw a solution path before testing.');
+      return;
+    }
+    const grid = buildPuzzleGrid(rows, cols, solutionPath, lockedCells);
+    setTestGrid(grid.map(r => [...r]));
+    setTestPath([]);
+    setTestResult('none');
+    setTestInkUsed(0);
+    setMode('test');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  }, [solutionPath, rows, cols, lockedCells]);
+
+  const handleTestCellTap = useCallback((r: number, c: number) => {
+    if (!testGrid || testResult !== 'none') return;
+
+    const fullRow = r + 1;
+    const fullCol = c + 1;
+    const pos: CellPosition = { row: fullRow, col: fullCol };
+
+    if (testInkUsed >= solutionPath.length) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return;
+    }
+
+    if (testPath.length > 0) {
+      const last = testPath[testPath.length - 1];
+      const adj = Math.abs(last.row - pos.row) + Math.abs(last.col - pos.col) === 1;
+      if (!adj) return;
+    }
+
+    const newTestPath = [...testPath, pos];
+    setTestPath(newTestPath);
+    setTestInkUsed(prev => prev + 1);
+    Haptics.selectionAsync();
+  }, [testGrid, testPath, testResult, testInkUsed, solutionPath.length]);
+
+  const handleTestSubmit = useCallback(() => {
+    if (!testGrid || testPath.length === 0) return;
+
+    const newGrid = applyFlip(testGrid, testPath);
+    setTestGrid(newGrid);
+
+    const solved = isAllCleared(newGrid);
+    if (solved) {
+      setTestResult('solved');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else {
+      setTestResult('failed');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
+  }, [testGrid, testPath]);
+
+  const handleTestReset = useCallback(() => {
+    const grid = buildPuzzleGrid(rows, cols, solutionPath, lockedCells);
+    setTestGrid(grid.map(r => [...r]));
+    setTestPath([]);
+    setTestResult('none');
+    setTestInkUsed(0);
+  }, [rows, cols, solutionPath, lockedCells]);
+
+  const handleExitTest = useCallback(() => {
+    setMode('path');
+    setTestGrid(null);
+    setTestPath([]);
+    setTestResult('none');
+    setTestInkUsed(0);
+  }, []);
+
+  const loadPuzzle = useCallback((puzzle: Puzzle | SerializedPuzzle) => {
+    const grid = puzzle.grid;
+    const numRows = grid.length;
+    const numCols = grid[0]?.length ?? 0;
+
+    setRows(numRows);
+    setCols(numCols);
+    setSolutionPath([...puzzle.solutionPath]);
+    setDifficulty(puzzle.difficulty);
+    setPuzzleId(String(puzzle.id));
+    setIsPremium(puzzle.isPremium ?? false);
+
+    const locked = new Map<string, 2 | 3>();
+    for (let r = 0; r < numRows; r++) {
+      for (let c = 0; c < numCols; c++) {
+        if (grid[r][c] === 2) locked.set(`${r},${c}`, 2);
+        else if (grid[r][c] === 3) locked.set(`${r},${c}`, 3);
+      }
+    }
+    setLockedCells(locked);
+    setMode('path');
+    setEditorView('editor');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  }, []);
+
+  const handleDeleteCustom = useCallback((id: number) => {
+    Alert.alert('Delete Custom Puzzle', `Remove custom puzzle #${id}? The built-in level will be restored.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: () => {
+          deleteCustomPuzzle(id);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      },
+    ]);
+  }, [deleteCustomPuzzle]);
+
+  const generateCode = useCallback(() => {
+    const id = parseInt(puzzleId) || 201;
+    const pathStr = solutionPath.map(([r, c]) => `[${r},${c}]`).join(',');
+    const hasLocked = lockedCells.size > 0;
+
+    let code = '';
+    if (hasLocked) {
+      const lockedLines: string[] = [];
+      for (const [key, val] of lockedCells) {
+        const [r, c] = key.split(',').map(Number);
+        lockedLines.push(`      pg[${r}][${c}] = ${val};`);
+      }
+      code = `  {\n    id: ${id},${isPremium ? ' isPremium: true,' : ''} difficulty: '${difficulty}',\n    solutionPath: [${pathStr}],\n    grid: (() => {\n      const pg = createPuzzleGrid(uniformGrid(${rows},${cols}), [${pathStr}]);\n${lockedLines.join('\n')}\n      return pg;\n    })(),\n  },`;
+    } else {
+      code = `  { id: ${id},${isPremium ? ' isPremium: true,' : ''} difficulty: '${difficulty}', solutionPath: [${pathStr}], grid: createPuzzleGrid(uniformGrid(${rows},${cols}), [${pathStr}]) },`;
+    }
+    return code;
+  }, [puzzleId, solutionPath, lockedCells, difficulty, rows, cols, isPremium]);
+
+  const handleCopy = useCallback(async () => {
+    const code = generateCode();
+    if (Platform.OS === 'web') {
+      try {
+        await navigator.clipboard.writeText(code);
+      } catch {
+        Alert.alert('Code', code);
+      }
+    } else {
+      await Clipboard.setStringAsync(code);
+    }
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert('Copied!', 'Puzzle code copied to clipboard.');
+  }, [generateCode]);
+
+  const browsePuzzles = useMemo(() => {
+    const customIds = new Set(customPuzzles.map(p => p.id));
+    let list: Array<{ puzzle: Puzzle | SerializedPuzzle; isCustom: boolean }> = [];
+
+    for (const p of ALL_PUZZLES) {
+      if (customIds.has(p.id)) {
+        const custom = customPuzzles.find(cp => cp.id === p.id)!;
+        list.push({ puzzle: custom, isCustom: true });
+      } else {
+        list.push({ puzzle: p, isCustom: false });
+      }
+    }
+
+    for (const cp of customPuzzles) {
+      if (!ALL_PUZZLES.find(p => p.id === cp.id)) {
+        list.push({ puzzle: cp, isCustom: true });
+      }
+    }
+
+    list.sort((a, b) => a.puzzle.id - b.puzzle.id);
+
+    if (browserFilter === 'custom') {
+      list = list.filter(item => item.isCustom);
+    } else if (browserFilter !== 'all') {
+      list = list.filter(item => item.puzzle.difficulty === browserFilter);
+    }
+
+    return list;
+  }, [customPuzzles, browserFilter]);
+
+  const renderTestMode = () => {
+    if (!testGrid) return null;
+    const inkLimit = solutionPath.length;
+    const inkRemaining = inkLimit - testInkUsed;
+    const inkRatio = inkRemaining / inkLimit;
+    const inkColor = inkRatio > 0.5 ? Colors.accent : inkRatio > 0.25 ? '#FF9500' : Colors.danger;
+
     return (
-      <View style={styles.miniGridContainer}>
-        <Text style={styles.miniGridLabel}>Solved State</Text>
-        <View style={{ flexDirection: 'column' }}>
-          {grid.map((row, r) => (
-            <View key={r} style={{ flexDirection: 'row' }}>
-              {row.map((cell, c) => (
-                <View
-                  key={c}
-                  style={[
-                    styles.miniCell,
-                    {
-                      width: 18,
-                      height: 18,
-                      backgroundColor: cell === 0 ? Colors.white : Colors.black,
-                    },
-                  ]}
-                />
-              ))}
+      <View style={styles.section}>
+        <View style={styles.testHeader}>
+          <Text style={styles.sectionTitle}>TEST PLAY</Text>
+          <View style={[
+            styles.testBadge,
+            testResult === 'solved' ? styles.testBadgeSolved :
+            testResult === 'failed' ? styles.testBadgeFailed : null,
+          ]}>
+            <Text style={styles.testBadgeText}>
+              {testResult === 'solved' ? 'SOLVED' : testResult === 'failed' ? 'FAILED' : 'PLAYING'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.inkRow}>
+          <View style={[styles.inkDot, { backgroundColor: inkColor }]} />
+          <View style={styles.inkTrack}>
+            <View style={[styles.inkFill, { width: `${inkRatio * 100}%`, backgroundColor: inkColor }]} />
+          </View>
+          <Text style={[styles.inkCount, { color: inkColor }]}>{inkRemaining}</Text>
+        </View>
+
+        <View style={[styles.gridEditor, { width: cellSize * (cols + 2), alignSelf: 'center' as const }]}>
+          <View style={{ flexDirection: 'row' as const }}>
+            {Array(cols + 2).fill(0).map((_, c) => (
+              <View key={`top-${c}`} style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
+                <View style={styles.grayCenterDot} />
+              </View>
+            ))}
+          </View>
+
+          {testGrid.map((row, r) => (
+            <View key={r} style={{ flexDirection: 'row' as const }}>
+              <View style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
+                <View style={styles.grayCenterDot} />
+              </View>
+              {row.map((cell, c) => {
+                const isInTestPath = testPath.some(p => p.row === r + 1 && p.col === c + 1);
+                let bg = '';
+                if (cell === 2) bg = Colors.locked;
+                else if (cell === 3) bg = Colors.locked;
+                else bg = cell === 0 ? Colors.white : Colors.black;
+
+                return (
+                  <Pressable
+                    key={c}
+                    onPress={() => handleTestCellTap(r, c)}
+                    style={[
+                      styles.editorCell,
+                      {
+                        width: cellSize - CELL_GAP,
+                        height: cellSize - CELL_GAP,
+                        margin: CELL_GAP / 2,
+                        backgroundColor: bg,
+                      },
+                      isInTestPath && styles.testPathCell,
+                    ]}
+                  >
+                    {(cell === 2 || cell === 3) && (
+                      <Text style={styles.lockedPreviewIcon}>⊘</Text>
+                    )}
+                  </Pressable>
+                );
+              })}
+              <View style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
+                <View style={styles.grayCenterDot} />
+              </View>
             </View>
           ))}
+
+          <View style={{ flexDirection: 'row' as const }}>
+            {Array(cols + 2).fill(0).map((_, c) => (
+              <View key={`bot-${c}`} style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
+                <View style={styles.grayCenterDot} />
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.testActions}>
+          {testResult === 'none' && testPath.length > 0 && (
+            <Pressable onPress={handleTestSubmit} style={[styles.actionBtn, styles.testSubmitBtn]}>
+              <Check size={16} color="#000" />
+              <Text style={[styles.actionBtnText, { color: '#000' }]}>Submit</Text>
+            </Pressable>
+          )}
+          <Pressable onPress={handleTestReset} style={styles.actionBtn}>
+            <RotateCcw size={16} color="#fff" />
+            <Text style={styles.actionBtnText}>Reset</Text>
+          </Pressable>
+          <Pressable onPress={handleExitTest} style={[styles.actionBtn, styles.dangerBtn]}>
+            <X size={16} color={Colors.danger} />
+            <Text style={[styles.actionBtnText, { color: Colors.danger }]}>Exit Test</Text>
+          </Pressable>
         </View>
       </View>
     );
   };
 
-  const renderPreviewGrid = () => {
+  const renderBrowser = () => (
+    <View style={styles.browserContainer}>
+      <View style={styles.filterRow}>
+        {(['all', 'custom', 'easy', 'medium', 'hard', 'expert'] as const).map(f => (
+          <Pressable
+            key={f}
+            onPress={() => setBrowserFilter(f)}
+            style={[styles.filterChip, browserFilter === f && styles.filterChipActive]}
+          >
+            <Text style={[styles.filterChipText, browserFilter === f && styles.filterChipTextActive]}>
+              {f === 'all' ? 'All' : f === 'custom' ? 'Custom' : f.charAt(0).toUpperCase() + f.slice(1)}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <Text style={styles.browserCount}>{browsePuzzles.length} puzzles</Text>
+
+      <FlatList
+        data={browsePuzzles}
+        keyExtractor={item => `${item.puzzle.id}-${item.isCustom ? 'c' : 'b'}`}
+        style={styles.browserList}
+        contentContainerStyle={styles.browserListContent}
+        renderItem={({ item }) => {
+          const p = item.puzzle;
+          const diffColor = DIFF_COLORS[p.difficulty];
+          return (
+            <View style={styles.browserItem}>
+              <View style={styles.browserItemLeft}>
+                <Text style={styles.browserItemId}>#{p.id}</Text>
+                <View style={[styles.browserDiffBadge, { backgroundColor: diffColor + '22' }]}>
+                  <Text style={[styles.browserDiffText, { color: diffColor }]}>
+                    {p.difficulty.toUpperCase()}
+                  </Text>
+                </View>
+                {item.isCustom && (
+                  <View style={styles.customBadge}>
+                    <Text style={styles.customBadgeText}>CUSTOM</Text>
+                  </View>
+                )}
+                <Text style={styles.browserItemMeta}>
+                  {p.grid.length}×{p.grid[0]?.length ?? 0} · {p.solutionPath.length} ink
+                </Text>
+              </View>
+              <View style={styles.browserItemActions}>
+                <Pressable onPress={() => loadPuzzle(p)} style={styles.browserActionBtn}>
+                  <Download size={16} color={Colors.accent} />
+                </Pressable>
+                {item.isCustom && (
+                  <Pressable onPress={() => handleDeleteCustom(p.id)} style={styles.browserActionBtn}>
+                    <Trash2 size={14} color={Colors.danger} />
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          );
+        }}
+      />
+    </View>
+  );
+
+  const renderEditorGrid = () => {
+    const gridToRender = mode === 'preview' ? puzzleGrid : solvedGrid;
+
     return (
-      <View style={styles.miniGridContainer}>
-        <Text style={styles.miniGridLabel}>Unsolved (Player Sees)</Text>
-        <View style={{ flexDirection: 'column' }}>
-          {previewGrid.map((row, r) => (
-            <View key={r} style={{ flexDirection: 'row' }}>
-              {row.map((cell, c) => {
-                let bg = cell === 0 || cell === 2 ? Colors.white : Colors.black;
-                if (cell === 2) bg = Colors.locked;
-                if (cell === 3) bg = Colors.locked;
-                return (
-                  <View
-                    key={c}
-                    style={[
-                      styles.miniCell,
-                      {
-                        width: 18,
-                        height: 18,
-                        backgroundColor: bg,
-                      },
-                      (cell === 2 || cell === 3) && styles.miniLockedCell,
-                    ]}
-                  />
-                );
-              })}
+      <View style={[styles.gridEditor, { width: cellSize * (cols + 2), alignSelf: 'center' as const }]}>
+        <View style={{ flexDirection: 'row' as const }}>
+          {Array(cols + 2).fill(0).map((_, c) => (
+            <View key={`top-${c}`} style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
+              <View style={styles.grayCenterDot} />
+            </View>
+          ))}
+        </View>
+
+        {gridToRender.map((row, r) => (
+          <View key={r} style={{ flexDirection: 'row' as const }}>
+            <View style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
+              <View style={styles.grayCenterDot} />
+            </View>
+            {row.map((cell, c) => {
+              const inPath = isInPath(r, c);
+              const locked = isLockedCell(r, c);
+              const lockedVal = lockedCells.get(`${r},${c}`);
+
+              let bg = '';
+              if (mode === 'preview') {
+                if (cell === 2 || cell === 3) bg = Colors.locked;
+                else bg = cell === 0 ? Colors.white : Colors.black;
+              } else {
+                bg = cell === 0 ? Colors.white : Colors.black;
+              }
+
+              return (
+                <Pressable
+                  key={c}
+                  onPress={() => mode !== 'preview' && handleCellTap(r, c)}
+                  style={[
+                    styles.editorCell,
+                    {
+                      width: cellSize - CELL_GAP,
+                      height: cellSize - CELL_GAP,
+                      margin: CELL_GAP / 2,
+                      backgroundColor: bg,
+                    },
+                    inPath && mode === 'path' && styles.pathCell,
+                    locked && mode !== 'preview' && styles.lockedEditCell,
+                  ]}
+                >
+                  {inPath && mode === 'path' && (
+                    <Text style={styles.pathNumber}>
+                      {solutionPath.findIndex(([pr, pc]) => pr === r && pc === c) + 1}
+                    </Text>
+                  )}
+                  {locked && mode !== 'preview' && (
+                    <Text style={styles.lockedLabel}>
+                      {lockedVal === 2 ? 'W' : 'B'}
+                    </Text>
+                  )}
+                  {mode === 'preview' && (cell === 2 || cell === 3) && (
+                    <Text style={styles.lockedPreviewIcon}>⊘</Text>
+                  )}
+                </Pressable>
+              );
+            })}
+            <View style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
+              <View style={styles.grayCenterDot} />
+            </View>
+          </View>
+        ))}
+
+        <View style={{ flexDirection: 'row' as const }}>
+          {Array(cols + 2).fill(0).map((_, c) => (
+            <View key={`bot-${c}`} style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
+              <View style={styles.grayCenterDot} />
             </View>
           ))}
         </View>
@@ -340,323 +678,241 @@ ${lockedLines.join('\n')}
           <View style={{ width: 40 }} />
         </View>
 
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Dimension Controls */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Grid Size</Text>
-            <View style={styles.dimRow}>
-              <View style={styles.dimControl}>
-                <Text style={styles.dimLabel}>Rows</Text>
-                <View style={styles.stepper}>
-                  <Pressable onPress={() => adjustDimension('rows', -1)} style={styles.stepperBtn}>
-                    <Minus size={16} color="#fff" />
-                  </Pressable>
-                  <Text style={styles.stepperValue}>{rows}</Text>
-                  <Pressable onPress={() => adjustDimension('rows', 1)} style={styles.stepperBtn}>
-                    <Plus size={16} color="#fff" />
-                  </Pressable>
-                </View>
-              </View>
-              <View style={styles.dimControl}>
-                <Text style={styles.dimLabel}>Cols</Text>
-                <View style={styles.stepper}>
-                  <Pressable onPress={() => adjustDimension('cols', -1)} style={styles.stepperBtn}>
-                    <Minus size={16} color="#fff" />
-                  </Pressable>
-                  <Text style={styles.stepperValue}>{cols}</Text>
-                  <Pressable onPress={() => adjustDimension('cols', 1)} style={styles.stepperBtn}>
-                    <Plus size={16} color="#fff" />
-                  </Pressable>
-                </View>
-              </View>
-              <View style={styles.dimControl}>
-                <Text style={styles.dimLabel}>Offset</Text>
-                <Pressable
-                  onPress={() => {
-                    setStartVal(prev => prev === 0 ? 1 : 0);
-                    setSolutionPath([]);
-                    Haptics.selectionAsync();
-                  }}
-                  style={[styles.toggleBtn, startVal === 1 && styles.toggleBtnActive]}
-                >
-                  <Text style={styles.toggleBtnText}>{startVal}</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-
-          {/* Mode Selector */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Edit Mode</Text>
-            <View style={styles.modeRow}>
-              <Pressable
-                onPress={() => setMode('path')}
-                style={[styles.modeBtn, mode === 'path' && styles.modeBtnActive]}
-              >
-                <Play size={14} color={mode === 'path' ? '#000' : '#aaa'} />
-                <Text style={[styles.modeBtnText, mode === 'path' && styles.modeBtnTextActive]}>
-                  Draw Path
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setMode('locked')}
-                style={[styles.modeBtn, mode === 'locked' && styles.modeBtnActive]}
-              >
-                <Grid3x3 size={14} color={mode === 'locked' ? '#000' : '#aaa'} />
-                <Text style={[styles.modeBtnText, mode === 'locked' && styles.modeBtnTextActive]}>
-                  Locked Cells
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setMode('preview')}
-                style={[styles.modeBtn, mode === 'preview' && styles.modeBtnActive]}
-              >
-                <Eye size={14} color={mode === 'preview' ? '#000' : '#aaa'} />
-                <Text style={[styles.modeBtnText, mode === 'preview' && styles.modeBtnTextActive]}>
-                  Preview
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-
-          {/* Main Grid Editor */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>
-              {mode === 'path' ? 'Tap cells to draw solution path' :
-               mode === 'locked' ? 'Tap to cycle: none → locked white (2) → locked black (3) → none' :
-               'Preview: what the player sees'}
+        <View style={styles.tabRow}>
+          <Pressable
+            onPress={() => setEditorView('editor')}
+            style={[styles.tab, editorView === 'editor' && styles.tabActive]}
+          >
+            <Grid3x3 size={15} color={editorView === 'editor' ? '#000' : '#888'} />
+            <Text style={[styles.tabText, editorView === 'editor' && styles.tabTextActive]}>Editor</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setEditorView('browser')}
+            style={[styles.tab, editorView === 'browser' && styles.tabActive]}
+          >
+            <Download size={15} color={editorView === 'browser' ? '#000' : '#888'} />
+            <Text style={[styles.tabText, editorView === 'browser' && styles.tabTextActive]}>
+              Browse ({customPuzzles.length} custom)
             </Text>
-            <View style={[styles.gridEditor, { width: (cellSize) * (cols + 2), alignSelf: 'center' }]}>
-              {/* Top gray row */}
-              <View style={{ flexDirection: 'row' }}>
-                {Array(cols + 2).fill(0).map((_, c) => (
-                  <View key={`top-${c}`} style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
-                    <View style={styles.grayCenterDot} />
-                  </View>
-                ))}
-              </View>
+          </Pressable>
+        </View>
 
-              {/* Inner rows with gray borders */}
-              {(mode === 'preview' ? previewGrid : solvedGrid).map((row, r) => (
-                <View key={r} style={{ flexDirection: 'row' }}>
-                  {/* Left gray */}
-                  <View style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
-                    <View style={styles.grayCenterDot} />
-                  </View>
-
-                  {row.map((cell, c) => {
-                    const inPath = isInPath(r, c);
-                    const locked = isLockedCell(r, c);
-                    const lockedVal = lockedCells.get(`${r},${c}`);
-
-                    let bg = '';
-                    if (mode === 'preview') {
-                      if (cell === 2) bg = Colors.locked;
-                      else if (cell === 3) bg = Colors.locked;
-                      else bg = (cell === 0) ? Colors.white : Colors.black;
-                    } else {
-                      bg = (cell === 0) ? Colors.white : Colors.black;
-                    }
-
-                    return (
-                      <Pressable
-                        key={c}
-                        onPress={() => mode !== 'preview' && handleCellTap(r, c)}
-                        style={[
-                          styles.editorCell,
-                          {
-                            width: cellSize - CELL_GAP,
-                            height: cellSize - CELL_GAP,
-                            margin: CELL_GAP / 2,
-                            backgroundColor: bg,
-                          },
-                          inPath && mode === 'path' && styles.pathCell,
-                          locked && mode !== 'preview' && styles.lockedEditCell,
-                        ]}
-                      >
-                        {inPath && mode === 'path' && (
-                          <Text style={styles.pathNumber}>
-                            {solutionPath.findIndex(([pr, pc]) => pr === r && pc === c) + 1}
-                          </Text>
-                        )}
-                        {locked && mode !== 'preview' && (
-                          <Text style={styles.lockedLabel}>
-                            {lockedVal === 2 ? 'W' : 'B'}
-                          </Text>
-                        )}
-                        {mode === 'preview' && (cell === 2 || cell === 3) && (
-                          <Text style={styles.lockedPreviewIcon}>⊘</Text>
-                        )}
-                      </Pressable>
-                    );
-                  })}
-
-                  {/* Right gray */}
-                  <View style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
-                    <View style={styles.grayCenterDot} />
+        {editorView === 'browser' ? renderBrowser() : (
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {mode === 'test' ? renderTestMode() : (
+              <>
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Grid Size</Text>
+                  <View style={styles.dimRow}>
+                    <View style={styles.dimControl}>
+                      <Text style={styles.dimLabel}>Rows</Text>
+                      <View style={styles.stepper}>
+                        <Pressable onPress={() => adjustDimension('rows', -1)} style={styles.stepperBtn}>
+                          <Minus size={16} color="#fff" />
+                        </Pressable>
+                        <Text style={styles.stepperValue}>{rows}</Text>
+                        <Pressable onPress={() => adjustDimension('rows', 1)} style={styles.stepperBtn}>
+                          <Plus size={16} color="#fff" />
+                        </Pressable>
+                      </View>
+                    </View>
+                    <View style={styles.dimControl}>
+                      <Text style={styles.dimLabel}>Cols</Text>
+                      <View style={styles.stepper}>
+                        <Pressable onPress={() => adjustDimension('cols', -1)} style={styles.stepperBtn}>
+                          <Minus size={16} color="#fff" />
+                        </Pressable>
+                        <Text style={styles.stepperValue}>{cols}</Text>
+                        <Pressable onPress={() => adjustDimension('cols', 1)} style={styles.stepperBtn}>
+                          <Plus size={16} color="#fff" />
+                        </Pressable>
+                      </View>
+                    </View>
                   </View>
                 </View>
-              ))}
 
-              {/* Bottom gray row */}
-              <View style={{ flexDirection: 'row' }}>
-                {Array(cols + 2).fill(0).map((_, c) => (
-                  <View key={`bot-${c}`} style={[styles.editorCell, styles.grayCell, { width: cellSize - CELL_GAP, height: cellSize - CELL_GAP, margin: CELL_GAP / 2 }]}>
-                    <View style={styles.grayCenterDot} />
-                  </View>
-                ))}
-              </View>
-            </View>
-
-            {mode === 'path' && (
-              <View style={styles.pathActions}>
-                <Pressable onPress={handleUndo} style={styles.actionBtn}>
-                  <Undo2 size={16} color="#fff" />
-                  <Text style={styles.actionBtnText}>Undo</Text>
-                </Pressable>
-                <Pressable onPress={handleClearPath} style={styles.actionBtn}>
-                  <RotateCcw size={16} color="#fff" />
-                  <Text style={styles.actionBtnText}>Clear Path</Text>
-                </Pressable>
-                <Pressable onPress={handleClearAll} style={[styles.actionBtn, styles.dangerBtn]}>
-                  <Trash2 size={16} color={Colors.danger} />
-                  <Text style={[styles.actionBtnText, { color: Colors.danger }]}>Clear All</Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
-
-          {/* Mini Previews */}
-          <View style={styles.previewRow}>
-            {renderSolvedGrid()}
-            {renderPreviewGrid()}
-          </View>
-
-          {/* Difficulty Analysis */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Analysis</Text>
-            <View style={styles.analysisCard}>
-              <View style={styles.analysisStat}>
-                <Text style={styles.analysisLabel}>Path Length</Text>
-                <Text style={styles.analysisValue}>{difficultyScore.pathLen}</Text>
-              </View>
-              <View style={styles.analysisStat}>
-                <Text style={styles.analysisLabel}>Turns</Text>
-                <Text style={styles.analysisValue}>{difficultyScore.turns}</Text>
-              </View>
-              <View style={styles.analysisStat}>
-                <Text style={styles.analysisLabel}>Grid Area</Text>
-                <Text style={styles.analysisValue}>{difficultyScore.gridArea}</Text>
-              </View>
-              <View style={styles.analysisStat}>
-                <Text style={styles.analysisLabel}>Coverage</Text>
-                <Text style={styles.analysisValue}>{difficultyScore.pathRatio}%</Text>
-              </View>
-              <View style={styles.analysisStat}>
-                <Text style={styles.analysisLabel}>Locked</Text>
-                <Text style={styles.analysisValue}>{difficultyScore.lockedCount}</Text>
-              </View>
-              <View style={styles.analysisStat}>
-                <Text style={styles.analysisLabel}>Score</Text>
-                <Text style={[styles.analysisValue, { color: '#fff' }]}>{difficultyScore.score}</Text>
-              </View>
-            </View>
-
-            <View style={styles.suggestedRow}>
-              <Text style={styles.suggestedLabel}>Suggested:</Text>
-              <Text style={[
-                styles.suggestedValue,
-                { color: difficultyScore.suggested === 'easy' ? Colors.success :
-                  difficultyScore.suggested === 'medium' ? '#E8BA6A' :
-                  difficultyScore.suggested === 'hard' ? '#E88A4A' : Colors.danger }
-              ]}>
-                {difficultyScore.suggested.toUpperCase()}
-              </Text>
-            </View>
-
-            {!pathIsConnected && (
-              <View style={styles.warningCard}>
-                <Text style={styles.warningText}>⚠ Path is not fully connected (has gaps)</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Export Settings */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Export Settings</Text>
-            <View style={styles.exportRow}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Puzzle ID</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={puzzleId}
-                  onChangeText={setPuzzleId}
-                  keyboardType="numeric"
-                  placeholderTextColor="#555"
-                />
-              </View>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Difficulty</Text>
-                <View style={styles.difficultyRow}>
-                  {(['easy', 'medium', 'hard', 'expert'] as Difficulty[]).map(d => (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Edit Mode</Text>
+                  <View style={styles.modeRow}>
                     <Pressable
-                      key={d}
-                      onPress={() => setDifficulty(d)}
-                      style={[styles.diffChip, difficulty === d && styles.diffChipActive]}
+                      onPress={() => setMode('path')}
+                      style={[styles.modeBtn, mode === 'path' && styles.modeBtnActive]}
                     >
-                      <Text style={[styles.diffChipText, difficulty === d && styles.diffChipTextActive]}>
-                        {d.charAt(0).toUpperCase()}
-                      </Text>
+                      <Play size={14} color={mode === 'path' ? '#000' : '#aaa'} />
+                      <Text style={[styles.modeBtnText, mode === 'path' && styles.modeBtnTextActive]}>Path</Text>
                     </Pressable>
-                  ))}
+                    <Pressable
+                      onPress={() => setMode('locked')}
+                      style={[styles.modeBtn, mode === 'locked' && styles.modeBtnActive]}
+                    >
+                      <Grid3x3 size={14} color={mode === 'locked' ? '#000' : '#aaa'} />
+                      <Text style={[styles.modeBtnText, mode === 'locked' && styles.modeBtnTextActive]}>Locked</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setMode('preview')}
+                      style={[styles.modeBtn, mode === 'preview' && styles.modeBtnActive]}
+                    >
+                      <Eye size={14} color={mode === 'preview' ? '#000' : '#aaa'} />
+                      <Text style={[styles.modeBtnText, mode === 'preview' && styles.modeBtnTextActive]}>Preview</Text>
+                    </Pressable>
+                  </View>
                 </View>
-              </View>
-            </View>
-            <View style={styles.exportRow}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Premium</Text>
-                <Pressable
-                  onPress={() => setIsPremium(prev => !prev)}
-                  style={[styles.toggleBtn, isPremium && styles.toggleBtnActive, { width: 60 }]}
-                >
-                  <Text style={styles.toggleBtnText}>{isPremium ? 'Yes' : 'No'}</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
 
-          {/* Code Output */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Generated Code</Text>
-            <View style={styles.codeCard}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <Text style={styles.codeText} selectable>
-                  {generateCode()}
-                </Text>
-              </ScrollView>
-            </View>
-            <View style={styles.exportActions}>
-              <Pressable onPress={handleCopy} style={styles.exportBtn}>
-                <Copy size={16} color="#000" />
-                <Text style={styles.exportBtnText}>Copy Code</Text>
-              </Pressable>
-              <Pressable onPress={handleExportAll} style={[styles.exportBtn, styles.exportBtnSecondary]}>
-                <Eye size={16} color="#fff" />
-                <Text style={[styles.exportBtnText, { color: '#fff' }]}>View Full</Text>
-              </Pressable>
-            </View>
-          </View>
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>
+                    {mode === 'path' ? 'Tap cells to draw solution path' :
+                     mode === 'locked' ? 'Tap: none → locked white → locked black → none' :
+                     'Preview: what the player sees'}
+                  </Text>
+                  {renderEditorGrid()}
 
-          <View style={{ height: 60 }} />
-        </ScrollView>
+                  {mode === 'path' && (
+                    <View style={styles.pathActions}>
+                      <Pressable onPress={handleUndo} style={styles.actionBtn}>
+                        <Undo2 size={16} color="#fff" />
+                        <Text style={styles.actionBtnText}>Undo</Text>
+                      </Pressable>
+                      <Pressable onPress={handleClearPath} style={styles.actionBtn}>
+                        <RotateCcw size={16} color="#fff" />
+                        <Text style={styles.actionBtnText}>Clear</Text>
+                      </Pressable>
+                      <Pressable onPress={handleClearAll} style={[styles.actionBtn, styles.dangerBtn]}>
+                        <Trash2 size={16} color={Colors.danger} />
+                        <Text style={[styles.actionBtnText, { color: Colors.danger }]}>All</Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Analysis</Text>
+                  <View style={styles.analysisCard}>
+                    <View style={styles.analysisStat}>
+                      <Text style={styles.analysisLabel}>Path</Text>
+                      <Text style={styles.analysisValue}>{difficultyScore.pathLen}</Text>
+                    </View>
+                    <View style={styles.analysisStat}>
+                      <Text style={styles.analysisLabel}>Turns</Text>
+                      <Text style={styles.analysisValue}>{difficultyScore.turns}</Text>
+                    </View>
+                    <View style={styles.analysisStat}>
+                      <Text style={styles.analysisLabel}>Area</Text>
+                      <Text style={styles.analysisValue}>{difficultyScore.gridArea}</Text>
+                    </View>
+                    <View style={styles.analysisStat}>
+                      <Text style={styles.analysisLabel}>Cover</Text>
+                      <Text style={styles.analysisValue}>{difficultyScore.pathRatio}%</Text>
+                    </View>
+                    <View style={styles.analysisStat}>
+                      <Text style={styles.analysisLabel}>Score</Text>
+                      <Text style={[styles.analysisValue, { color: '#fff' }]}>{difficultyScore.score}</Text>
+                    </View>
+                    <View style={styles.analysisStat}>
+                      <Text style={styles.analysisLabel}>Suggest</Text>
+                      <Text style={[styles.analysisValue, { color: DIFF_COLORS[difficultyScore.suggested], fontSize: 13 }]}>
+                        {difficultyScore.suggested.toUpperCase()}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {!pathIsConnected && solutionPath.length > 1 && (
+                    <View style={styles.warningCard}>
+                      <Text style={styles.warningText}>⚠ Path has gaps — not solvable in one line</Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Settings</Text>
+                  <View style={styles.exportRow}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>Puzzle ID</Text>
+                      <TextInput
+                        style={styles.textInput}
+                        value={puzzleId}
+                        onChangeText={setPuzzleId}
+                        keyboardType="numeric"
+                        placeholderTextColor="#555"
+                      />
+                    </View>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>Difficulty</Text>
+                      <View style={styles.difficultyRow}>
+                        {(['easy', 'medium', 'hard', 'expert'] as Difficulty[]).map(d => (
+                          <Pressable
+                            key={d}
+                            onPress={() => setDifficulty(d)}
+                            style={[styles.diffChip, difficulty === d && styles.diffChipActive]}
+                          >
+                            <Text style={[styles.diffChipText, difficulty === d && styles.diffChipTextActive]}>
+                              {d.charAt(0).toUpperCase()}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                  <View style={styles.exportRow}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>Premium</Text>
+                      <Pressable
+                        onPress={() => setIsPremium(prev => !prev)}
+                        style={[styles.toggleBtn, isPremium && styles.toggleBtnActive, { width: 60 }]}
+                      >
+                        <Text style={[styles.toggleBtnText, isPremium && { color: '#000' }]}>{isPremium ? 'Yes' : 'No'}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.mainActions}>
+                  <Pressable onPress={handleStartTest} style={[styles.mainActionBtn, styles.testBtn]}>
+                    <Play size={18} color="#000" />
+                    <Text style={[styles.mainActionText, { color: '#000' }]}>Test Play</Text>
+                  </Pressable>
+                  <Pressable onPress={handleSaveToGame} style={[styles.mainActionBtn, styles.saveBtn]}>
+                    <Save size={18} color="#000" />
+                    <Text style={[styles.mainActionText, { color: '#000' }]}>Save to Game</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Code</Text>
+                  <View style={styles.codeCard}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      <Text style={styles.codeText} selectable>
+                        {generateCode()}
+                      </Text>
+                    </ScrollView>
+                  </View>
+                  <View style={styles.exportActions}>
+                    <Pressable onPress={handleCopy} style={styles.copyBtn}>
+                      <Copy size={14} color="#000" />
+                      <Text style={styles.copyBtnText}>Copy Code</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                <View style={{ height: 60 }} />
+              </>
+            )}
+          </ScrollView>
+        )}
       </SafeAreaView>
     </View>
   );
 }
+
+const DIFF_COLORS: Record<string, string> = {
+  easy: Colors.success,
+  medium: Colors.accent,
+  hard: Colors.danger,
+  expert: '#B44AE8',
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -689,18 +945,46 @@ const styles = StyleSheet.create({
     color: '#fff',
     letterSpacing: 1,
   },
+  tabRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    paddingVertical: 10,
+  },
+  tabActive: {
+    backgroundColor: '#fff',
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: '#888',
+  },
+  tabTextActive: {
+    color: '#000',
+  },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     paddingHorizontal: 16,
-    paddingTop: 16,
+    paddingTop: 12,
   },
   section: {
     marginBottom: 20,
   },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600' as const,
     color: Colors.textSecondary,
     textTransform: 'uppercase' as const,
@@ -769,12 +1053,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderRadius: 10,
     paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: 'transparent',
   },
   modeBtnActive: {
     backgroundColor: '#fff',
-    borderColor: '#fff',
   },
   modeBtnText: {
     fontSize: 12,
@@ -852,31 +1133,6 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
     color: '#fff',
   },
-  previewRow: {
-    flexDirection: 'row',
-    gap: 16,
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  miniGridContainer: {
-    alignItems: 'center',
-  },
-  miniGridLabel: {
-    fontSize: 10,
-    fontWeight: '600' as const,
-    color: Colors.textSecondary,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  miniCell: {
-    margin: 1,
-    borderRadius: 2,
-  },
-  miniLockedCell: {
-    borderWidth: 1,
-    borderColor: Colors.lockedAccent,
-  },
   analysisCard: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -899,22 +1155,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700' as const,
     color: Colors.textPrimary,
-  },
-  suggestedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 10,
-    gap: 8,
-  },
-  suggestedLabel: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-  },
-  suggestedValue: {
-    fontSize: 15,
-    fontWeight: '800' as const,
-    letterSpacing: 1,
   },
   warningCard: {
     backgroundColor: 'rgba(232, 186, 106, 0.1)',
@@ -963,12 +1203,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     backgroundColor: Colors.surface,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'transparent',
   },
   diffChipActive: {
     backgroundColor: '#fff',
-    borderColor: '#fff',
   },
   diffChipText: {
     fontSize: 13,
@@ -977,6 +1214,30 @@ const styles = StyleSheet.create({
   },
   diffChipTextActive: {
     color: '#000',
+  },
+  mainActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 20,
+  },
+  mainActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+  testBtn: {
+    backgroundColor: Colors.accent,
+  },
+  saveBtn: {
+    backgroundColor: Colors.success,
+  },
+  mainActionText: {
+    fontSize: 15,
+    fontWeight: '700' as const,
   },
   codeCard: {
     backgroundColor: '#111',
@@ -997,7 +1258,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     justifyContent: 'center',
   },
-  exportBtn: {
+  copyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -1006,12 +1267,173 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
   },
-  exportBtnSecondary: {
-    backgroundColor: Colors.surface,
-  },
-  exportBtnText: {
+  copyBtnText: {
     fontSize: 13,
     fontWeight: '700' as const,
     color: '#000',
+  },
+  testHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  testBadge: {
+    backgroundColor: Colors.surface,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  testBadgeSolved: {
+    backgroundColor: Colors.successDim,
+  },
+  testBadgeFailed: {
+    backgroundColor: Colors.dangerDim,
+  },
+  testBadgeText: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    color: '#fff',
+    letterSpacing: 1,
+  },
+  inkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  inkDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  inkTrack: {
+    flex: 1,
+    height: 5,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  inkFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  inkCount: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    width: 26,
+    textAlign: 'right',
+  },
+  testPathCell: {
+    borderWidth: 2,
+    borderColor: Colors.accent,
+  },
+  testActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+    justifyContent: 'center',
+  },
+  testSubmitBtn: {
+    backgroundColor: Colors.accent,
+  },
+  browserContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingVertical: 8,
+    flexWrap: 'wrap',
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.surface,
+  },
+  filterChipActive: {
+    backgroundColor: '#fff',
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: '#888',
+  },
+  filterChipTextActive: {
+    color: '#000',
+  },
+  browserCount: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  browserList: {
+    flex: 1,
+  },
+  browserListContent: {
+    paddingBottom: 40,
+  },
+  browserItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 6,
+  },
+  browserItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  browserItemId: {
+    fontSize: 14,
+    fontWeight: '700' as const,
+    color: '#fff',
+    width: 40,
+  },
+  browserDiffBadge: {
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  browserDiffText: {
+    fontSize: 10,
+    fontWeight: '700' as const,
+    letterSpacing: 0.5,
+  },
+  customBadge: {
+    backgroundColor: Colors.accentDim,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  customBadgeText: {
+    fontSize: 9,
+    fontWeight: '700' as const,
+    color: Colors.accent,
+    letterSpacing: 0.5,
+  },
+  browserItemMeta: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+  },
+  browserItemActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  browserActionBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: Colors.backgroundDeep,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
