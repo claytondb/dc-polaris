@@ -469,7 +469,7 @@ const PREMIUM_PUZZLES: Puzzle[] = [
   { id: 130, isPremium: true, difficulty: 'medium', solutionPath: snake(5,2,6), grid: createPuzzleGrid(uniformGrid(6,8), snake(5,2,6)) },
   { id: 131, isPremium: true, difficulty: 'medium', solutionPath: spiralPath(5,7,0,0), grid: createPuzzleGrid(uniformGrid(6,8), spiralPath(5,7,0,0)) },
   { id: 132, isPremium: true, difficulty: 'medium', solutionPath: uPath(0,1,5,5), grid: createPuzzleGrid(uniformGrid(6,8), uPath(0,1,5,5)) },
-  { id: 133, isPremium: true, difficulty: 'medium', solutionPath: crossPath(3,4,3), grid: createPuzzleGrid(uniformGrid(6,8), crossPath(3,4,3)) },
+  { id: 133, isPremium: true, difficulty: 'medium', solutionPath: crossPath(3,4,3), grid: createPuzzleGrid(uniformGrid(7,9), crossPath(3,4,3)) },
   { id: 134, isPremium: true, difficulty: 'medium', solutionPath: snake(6,1,7), grid: createPuzzleGrid(uniformGrid(7,8), snake(6,1,7)) },
   { id: 135, isPremium: true, difficulty: 'medium', solutionPath: borderPath(6,7,0,0), grid: createPuzzleGrid(uniformGrid(7,8), borderPath(6,7,0,0)) },
   { id: 136, isPremium: true, difficulty: 'medium', solutionPath: snake(5,2,7), grid: createPuzzleGrid(uniformGrid(7,8), snake(5,2,7)) },
